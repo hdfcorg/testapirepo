@@ -1,75 +1,95 @@
-name: Require Team Approvals (Develop Only)
+name: Enforce Team-Based Approvals
+
 on:
   pull_request:
     branches:
-      - develop  # ✅ This ensures the workflow runs only for PRs targeting the develop branch
-    types: [opened, synchronize, reopened, review_requested]
-
-permissions:
-  contents: read
-  pull-requests: read
-  actions: read
-  checks: write
-  organization-projects: read
-  id-token: write
-  issues: read
-  statuses: write
+      - develop  # Applies only to PRs targeting develop
+    types: [opened, synchronize, reopened, review_requested, submitted, edited]
 
 jobs:
-  check_approvals:
+  check-approvals:
     runs-on: ubuntu-latest
+    env:
+      ORG_ACCESS_TOKEN: ${{ secrets.ORG_ACCESS_TOKEN }}  # Use stored PAT
+    
     steps:
-      - name: Ensure PR Targets Develop Branch
+      - name: Get PR Approvals
+        id: approvals
         run: |
-          if [[ "${{ github.base_ref }}" != "develop" ]]; then
-            echo "This PR does not target the develop branch. Skipping approval checks."
-            exit 0
+          PR_NUMBER=$(jq --raw-output .pull_request.number "$GITHUB_EVENT_PATH")
+          echo "PR Number: $PR_NUMBER"
+          
+          REVIEWS=$(curl -s -H "Authorization: Bearer $ORG_ACCESS_TOKEN" \
+                     -H "Accept: application/vnd.github.v3+json" \
+                     "https://api.github.com/repos/hdfcorg/testapirepo/pulls/$PR_NUMBER/reviews")
+          
+          if [[ -z "$REVIEWS" || "$REVIEWS" == "[]" ]]; then
+            echo "❌ No approvals found yet. Merge is blocked until at least one review is submitted."
+            exit 1
+          fi
+          
+          echo "$REVIEWS" > reviews.json
+          echo "✅ PR Reviews Fetched Successfully."
+
+      - name: Debug PR Approvals
+        run: cat reviews.json  # Print reviews for debugging
+
+      - name: Validate Approvers from Different Teams
+        id: validate_teams
+        run: |
+          ORGANIZATION="hdfcorg"
+          TEAM_A="teamahdfc"
+          TEAM_B="teambsidgs"
+
+          TEAM_A_APPROVED=0
+          TEAM_B_APPROVED=0
+
+          TEAM_A_MEMBERS=$(curl -s -H "Authorization: Bearer $ORG_ACCESS_TOKEN" \
+                                  -H "Accept: application/vnd.github.v3+json" \
+                                  "https://api.github.com/orgs/$ORGANIZATION/teams/$TEAM_A/members" | jq -r '.[].login')
+          TEAM_B_MEMBERS=$(curl -s -H "Authorization: Bearer $ORG_ACCESS_TOKEN" \
+                                  -H "Accept: application/vnd.github.v3+json" \
+                                  "https://api.github.com/orgs/$ORGANIZATION/teams/$TEAM_B/members" | jq -r '.[].login')
+
+          echo "🔹 Team A Members: $TEAM_A_MEMBERS"
+          echo "🔹 Team B Members: $TEAM_B_MEMBERS"
+
+          for USER in $(jq -r '.[] | select(.state=="APPROVED") | .user.login' reviews.json); do
+            echo "✅ Checking approval from: $USER"
+            
+            if echo "$TEAM_A_MEMBERS" | grep -qw "$USER"; then
+              TEAM_A_APPROVED=1
+              echo "✅ $USER is in Team A"
+            fi
+            if echo "$TEAM_B_MEMBERS" | grep -qw "$USER"; then
+              TEAM_B_APPROVED=1
+              echo "✅ $USER is in Team B"
+            fi
+          done
+
+          if [[ $TEAM_A_APPROVED -eq 0 || $TEAM_B_APPROVED -eq 0 ]]; then
+            echo "❌ Error: At least one approval from each team is required!"
+            exit 1
+          else
+            echo "✅ Approvals from both teams verified. Merge allowed."
           fi
 
-      - name: Check Required Approvals
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const pr_number = context.payload.pull_request.number;
+      - name: Block Merge if Conditions Fail
+        if: failure()
+        run: |
+          echo "❌ Merge is blocked. PR must have at least one approval from each team."
+          exit 1
 
-            // Get the base branch (target branch of the PR)
-            const baseBranch = context.payload.pull_request.base.ref;
-            if (baseBranch !== "develop") {
-              console.log("This PR does not target the develop branch. Skipping approval checks.");
-              return;
-            }
+  request_reviewers:
+    runs-on: ubuntu-latest
+    env:
+      ORG_ACCESS_TOKEN: ${{ secrets.ORG_ACCESS_TOKEN }}
 
-            // Get reviews from the pull request
-            const { data: reviews } = await github.rest.pulls.listReviews({
-              owner,
-              repo,
-              pull_number: pr_number
-            });
-
-            // Extract approved reviews
-            const approvedReviews = reviews.filter(review => review.state === "APPROVED");
-            const approvingUsers = [...new Set(approvedReviews.map(review => review.user.login))];
-
-            // Fetch team members for each team
-            const teams = ["teamahdfc", "teambsidgs"];
-            let teamApprovals = { teamahdfc: false, teambsidgs: false };
-
-            for (const team of teams) {
-              const { data: teamMembers } = await github.rest.teams.listMembersInOrg({
-                org: owner,
-                team_slug: team
-              });
-
-              const teamUsernames = teamMembers.map(member => member.login);
-              if (approvingUsers.some(user => teamUsernames.includes(user))) {
-                teamApprovals[team] = true;
-              }
-            }
-
-            // Ensure at least one approval from each team
-            if (!teamApprovals.teamahdfc || !teamApprovals.teambsidgs) {
-              core.setFailed("PR cannot be merged. At least one approval is required from each team.");
-            }
+    steps:
+      - name: Automatically Request Reviewers from Teams
+        run: |
+          PR_NUMBER=$(jq --raw-output .pull_request.number "$GITHUB_EVENT_PATH")
+          curl -X POST -H "Authorization: Bearer $ORG_ACCESS_TOKEN" \
+               -H "Accept: application/vnd.github.v3+json" \
+               "https://api.github.com/repos/hdfcorg/testapirepo/pulls/$PR_NUMBER/requested_reviewers" \
+               -d '{"team_reviewers": ["teamahdfc", "teambsidgs"]}'
