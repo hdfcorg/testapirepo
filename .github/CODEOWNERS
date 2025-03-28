@@ -1,1 +1,3 @@
-develop @hdfcorg/teamahdfc @hdfcorg/teambsidgs
+# Assign teamahdfc and teambsidgs to all files in the repo
+* @hdfcorg/teamahdfc @hdfcorg/teambsidgs  
+
