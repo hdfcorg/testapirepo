@@ -13,6 +13,11 @@ jobs:
       ORG_ACCESS_TOKEN: ${{ secrets.ORG_ACCESS_TOKEN }}  # Use stored PAT
     
     steps:
+      - name: Debug GitHub Event
+        run: |
+          echo "🔹 GitHub Event Path: $GITHUB_EVENT_PATH"
+          cat $GITHUB_EVENT_PATH
+
       - name: Get PR Approvals
         id: approvals
         run: |
@@ -86,6 +91,11 @@ jobs:
       ORG_ACCESS_TOKEN: ${{ secrets.ORG_ACCESS_TOKEN }}
 
     steps:
+      - name: Debug GitHub Event
+        run: |
+          echo "🔹 GitHub Event Path: $GITHUB_EVENT_PATH"
+          cat $GITHUB_EVENT_PATH
+
       - name: Automatically Request Reviewers from Teams
         run: |
           PR_NUMBER=$(jq --raw-output .pull_request.number "$GITHUB_EVENT_PATH")
