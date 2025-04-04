@@ -1,1 +1,52 @@
-
+name: Enforce Team Approvals
+on:
+  pull_request_review:
+    types: [submitted]
+jobs:
+  check-approvals:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch PR number
+        id: get_pr_number
+        run: echo "PR_NUMBER=${{ github.event.pull_request.number }}" >> $GITHUB_ENV
+      - name: Fetch PR reviews
+        id: reviews
+        uses: octokit/request-action@v2.x
+        with:
+          route: GET /repos/${{ github.repository_owner }}/${{ github.event.repository.name }}/pulls/${{ env.PR_NUMBER }}/reviews
+        env:
+          GITHUB_TOKEN: ${{ secrets.MY_TOKEN }}
+      - name: Fetch Team A Members
+        id: team_a
+        uses: octokit/request-action@v2.x
+        with:
+          route: GET /orgs/${{ github.repository_owner }}/teams/teamahdfc/members
+        env:
+          GITHUB_TOKEN: ${{ secrets.MY_TOKEN }}
+      - name: Fetch Team B Members
+        id: team_b
+        uses: octokit/request-action@v2.x
+        with:
+          route: GET /orgs/${{ github.repository_owner }}/teams/teambsidgs/members
+        env:
+          GITHUB_TOKEN: ${{ secrets.MY_TOKEN }}
+      - name: Validate Approvals
+        run: |
+          TEAM_A_MEMBERS=($(echo '${{ steps.team_a.outputs.data }}' | jq -r '.[].login'))
+          TEAM_B_MEMBERS=($(echo '${{ steps.team_b.outputs.data }}' | jq -r '.[].login'))
+          TEAM_A_APPROVED=0
+          TEAM_B_APPROVED=0
+          for reviewer in $(echo '${{ steps.reviews.outputs.data }}' | jq -r '.[].user.login'); do
+            if [[ " ${TEAM_A_MEMBERS[@]} " =~ " ${reviewer} " ]]; then
+              TEAM_A_APPROVED=1
+            fi
+            if [[ " ${TEAM_B_MEMBERS[@]} " =~ " ${reviewer} " ]]; then
+              TEAM_B_APPROVED=1
+            fi
+          done
+          if [[ $TEAM_A_APPROVED -eq 1 && $TEAM_B_APPROVED -eq 1 ]]; then
+            echo "✅ Merge Allowed"
+          else
+            echo "❌ One approval from each team is required!"
+            exit 1
+          fi
