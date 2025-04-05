@@ -9,13 +9,7 @@ jobs:
       - name: Fetch PR number
         id: get_pr_number
         run: echo "PR_NUMBER=${{ github.event.pull_request.number }}" >> $GITHUB_ENV
-      - name: Fetch PR reviews
-        id: reviews
-        uses: octokit/request-action@v2.x
-        with:
-          route: GET /repos/${{ github.repository_owner }}/${{ github.event.repository.name }}/pulls/${{ env.PR_NUMBER }}/reviews
-        env:
-          GITHUB_TOKEN: ${{ secrets.MY_TOKEN }}
+      
       - name: Fetch Team A Members
         id: team_a
         uses: octokit/request-action@v2.x
